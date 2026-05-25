@@ -66,6 +66,15 @@ _SAFE_OPS = {
     ast.USub: operator.neg,
 }
 
+_MAX_AST_DEPTH = 20
+
+def _check_depth(node, depth=0):
+    """Recorre el árbol AST y lanza ValueError si supera _MAX_AST_DEPTH."""
+    if depth > _MAX_AST_DEPTH:
+        raise ValueError("Expresión demasiado anidada")
+    for child in ast.iter_child_nodes(node):
+        _check_depth(child, depth + 1)
+
 def _safe_eval(node):
     if isinstance(node, ast.Expression):
         return _safe_eval(node.body)
@@ -153,8 +162,10 @@ def calc():
         return jsonify({"error": "Expresión demasiado larga"}), 400
 
     try:
-        # ✅ AST restringido — solo operaciones matemáticas, sin eval()
         tree = ast.parse(expr, mode="eval")
+        # ✅ Cota de profundidad — evita RecursionError por árbol muy anidado
+        _check_depth(tree)
+        # ✅ AST restringido — solo operaciones matemáticas, sin eval()
         result = _safe_eval(tree)
         return jsonify({"result": result})
     except (ValueError, ZeroDivisionError, SyntaxError) as e:
