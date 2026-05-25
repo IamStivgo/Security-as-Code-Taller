@@ -1,17 +1,22 @@
+import os
 from flask import Flask, jsonify, request
+from dotenv import load_dotenv
+
+load_dotenv()  # Carga variables desde el archivo .env
 
 app = Flask(__name__)
 
+# ✅ Credenciales leídas desde variables de entorno
 users = {
-    "admin": "Admin123!",
-    "cliente": "cliente123"
+    "admin": os.environ["USER_ADMIN_PASSWORD"],
+    "cliente": os.environ["USER_CLIENTE_PASSWORD"],
 }
 
-app.debug = True
+# ✅ Debug desactivado por defecto; solo activo si FLASK_DEBUG=true en .env
+app.debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
 
-SECRET_KEY = "super-secret-key-123"
-
-FIXED_TOKEN = "token-inseguro-12345"
+# ✅ Clave secreta leída desde variable de entorno
+SECRET_KEY = os.environ["SECRET_KEY"]
 
 
 @app.route("/login", methods=["POST"])
@@ -23,7 +28,8 @@ def login():
     if username in users and users[username] == password:
         return jsonify({
             "message": "Login exitoso",
-            "token": FIXED_TOKEN
+            # TODO: reemplazar por JWT dinámico con expiración
+            "token": "autenticado"
         })
 
     return jsonify({"error": "Credenciales inválidas"}), 401
