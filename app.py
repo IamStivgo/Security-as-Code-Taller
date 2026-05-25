@@ -1,3 +1,5 @@
+import ast
+import operator
 import os
 import hmac
 import datetime
@@ -50,6 +52,32 @@ def token_required(func):
 
 
 # ---------------------------------------------------------------------------
+# Calculadora segura — reemplaza eval() con AST restringido
+# Solo permite: +  -  *  /  //  **  números y paréntesis
+# ---------------------------------------------------------------------------
+_SAFE_OPS = {
+    ast.Add:  operator.add,
+    ast.Sub:  operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div:  operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Pow:  operator.pow,
+    ast.USub: operator.neg,
+}
+
+def _safe_eval(node):
+    if isinstance(node, ast.Expression):
+        return _safe_eval(node.body)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_OPS:
+        return _SAFE_OPS[type(node.op)](_safe_eval(node.left), _safe_eval(node.right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPS:
+        return _SAFE_OPS[type(node.op)](_safe_eval(node.operand))
+    raise ValueError(f"Operación no permitida: {ast.dump(node)}")
+
+
+# ---------------------------------------------------------------------------
 # Rutas
 # ---------------------------------------------------------------------------
 @app.route("/login", methods=["POST"])
@@ -81,23 +109,33 @@ def admin():
 
 
 @app.route("/search")
+@token_required  # ✅ Requiere JWT válido
 def search():
     q = request.args.get("q", "")
-    query = "SELECT * FROM users WHERE name = '" + q + "'"
-    return jsonify({"query": query})
+    # ✅ Parámetro separado del SQL — nunca concatenado
+    query = "SELECT * FROM users WHERE name = ?"
+    return jsonify({"query": query, "params": [q]})
 
 
 @app.route("/calc")
+@token_required  # ✅ Requiere JWT válido
 def calc():
     expr = request.args.get("expr", "0")
-    result = eval(expr)
-    return jsonify({"result": result})
+    try:
+        # ✅ AST restringido — solo operaciones matemáticas, sin eval()
+        tree = ast.parse(expr, mode="eval")
+        result = _safe_eval(tree)
+        return jsonify({"result": result})
+    except (ValueError, ZeroDivisionError, SyntaxError) as e:
+        return jsonify({"error": f"Expresión inválida: {e}"}), 400
 
 
 @app.route("/echo")
+@token_required  # ✅ Requiere JWT válido
 def echo():
-    msg = request.args.get("msg")
-    return msg
+    msg = request.args.get("msg", "")
+    # ✅ Retorna JSON con Content-Type correcto — evita XSS reflejado
+    return jsonify({"msg": msg})
 
 
 if __name__ == "__main__":
