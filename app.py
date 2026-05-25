@@ -1,5 +1,6 @@
 import ast
 import operator
+import re
 import os
 import hmac
 import datetime
@@ -86,6 +87,14 @@ def login():
     username = data.get("username", "")
     password = data.get("password", "")
 
+    # ✅ Validación de tipo: evita AttributeError → HTTP 500 con stack trace
+    if not isinstance(username, str) or not isinstance(password, str):
+        return jsonify({"error": "Formato inválido"}), 400
+
+    # ✅ Límite de longitud: evita payloads abusivos
+    if len(username) > 64 or len(password) > 128:
+        return jsonify({"error": "Credenciales demasiado largas"}), 400
+
     stored_hash = users.get(username)
 
     # ✅ bcrypt.checkpw realiza comparación segura (timing-safe + hash)
@@ -112,7 +121,20 @@ def admin():
 @token_required  # ✅ Requiere JWT válido
 def search():
     q = request.args.get("q", "")
-    # ✅ Parámetro separado del SQL — nunca concatenado
+
+    # ✅ Validación de tipo
+    if not isinstance(q, str):
+        return jsonify({"error": "Parámetro inválido"}), 400
+
+    # ✅ Límite de longitud
+    if len(q) > 100:
+        return jsonify({"error": "Búsqueda demasiado larga"}), 400
+
+    # ✅ Solo letras, números y espacios — bloquea caracteres SQL especiales
+    if not re.match(r"^[a-zA-Z0-9 _-]*$", q):
+        return jsonify({"error": "Caracteres no permitidos en la búsqueda"}), 400
+
+    # ✅ Parámetro separado de la consulta — nunca concatenado
     query = "SELECT * FROM users WHERE name = ?"
     return jsonify({"query": query, "params": [q]})
 
@@ -121,6 +143,15 @@ def search():
 @token_required  # ✅ Requiere JWT válido
 def calc():
     expr = request.args.get("expr", "0")
+
+    # ✅ Validación de tipo
+    if not isinstance(expr, str):
+        return jsonify({"error": "Parámetro inválido"}), 400
+
+    # ✅ Límite de longitud — previene DoS por expresiones gigantes (9**9**9**9)
+    if len(expr) > 64:
+        return jsonify({"error": "Expresión demasiado larga"}), 400
+
     try:
         # ✅ AST restringido — solo operaciones matemáticas, sin eval()
         tree = ast.parse(expr, mode="eval")
@@ -134,6 +165,15 @@ def calc():
 @token_required  # ✅ Requiere JWT válido
 def echo():
     msg = request.args.get("msg", "")
+
+    # ✅ Validación de tipo
+    if not isinstance(msg, str):
+        return jsonify({"error": "Parámetro inválido"}), 400
+
+    # ✅ Límite de longitud — evita payloads de megabytes
+    if len(msg) > 200:
+        return jsonify({"error": "Mensaje demasiado largo"}), 400
+
     # ✅ Retorna JSON con Content-Type correcto — evita XSS reflejado
     return jsonify({"msg": msg})
 
