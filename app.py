@@ -1,43 +1,83 @@
 import os
+import hmac
+import datetime
+import functools
+
+import bcrypt
+import jwt
 from flask import Flask, jsonify, request
 from dotenv import load_dotenv
 
-load_dotenv()  # Carga variables desde el archivo .env
+load_dotenv()
 
 app = Flask(__name__)
 
-# ✅ Credenciales leídas desde variables de entorno
-users = {
-    "admin": os.environ["USER_ADMIN_PASSWORD"],
-    "cliente": os.environ["USER_CLIENTE_PASSWORD"],
-}
-
-# ✅ Debug desactivado por defecto; solo activo si FLASK_DEBUG=true en .env
-app.debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
-
-# ✅ Clave secreta leída desde variable de entorno
+# ✅ Clave secreta desde variable de entorno — usada para firmar JWTs
 SECRET_KEY = os.environ["SECRET_KEY"]
 
+# ✅ Debug desactivado por defecto
+app.debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
 
+# ✅ Contraseñas almacenadas como hashes bcrypt (nunca en texto plano)
+users = {
+    "admin":   bcrypt.hashpw(os.environ["USER_ADMIN_PASSWORD"].encode(),   bcrypt.gensalt()),
+    "cliente": bcrypt.hashpw(os.environ["USER_CLIENTE_PASSWORD"].encode(), bcrypt.gensalt()),
+}
+
+
+# ---------------------------------------------------------------------------
+# Decorador: valida el JWT en el header Authorization: Bearer <token>
+# ---------------------------------------------------------------------------
+def token_required(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"error": "Token requerido"}), 401
+
+        token = auth_header.split(" ", 1)[1]
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            request.current_user = payload["sub"]
+        except jwt.ExpiredSignatureError:
+            return jsonify({"error": "Token expirado"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"error": "Token inválido"}), 401
+
+        return func(*args, **kwargs)
+    return wrapper
+
+
+# ---------------------------------------------------------------------------
+# Rutas
+# ---------------------------------------------------------------------------
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.get_json()
-    username = data.get("username")
-    password = data.get("password")
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "")
+    password = data.get("password", "")
 
-    if username in users and users[username] == password:
-        return jsonify({
-            "message": "Login exitoso",
-            # TODO: reemplazar por JWT dinámico con expiración
-            "token": "autenticado"
-        })
+    stored_hash = users.get(username)
+
+    # ✅ bcrypt.checkpw realiza comparación segura (timing-safe + hash)
+    if stored_hash and bcrypt.checkpw(password.encode(), stored_hash):
+        # ✅ JWT dinámico: único por sesión, firmado, con expiración de 1 hora
+        payload = {
+            "sub": username,
+            "iat": datetime.datetime.utcnow(),
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1),
+        }
+        token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+        return jsonify({"message": "Login exitoso", "token": token})
 
     return jsonify({"error": "Credenciales inválidas"}), 401
 
 
 @app.route("/admin")
+@token_required  # ✅ Solo accesible con JWT válido
 def admin():
-    return jsonify({"secret": "TOP_SECRET"})
+    return jsonify({"secret": "TOP_SECRET", "user": request.current_user})
 
 
 @app.route("/search")
